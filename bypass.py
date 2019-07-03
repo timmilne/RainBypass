@@ -12,25 +12,17 @@ GPIO.setup(11, GPIO.OUT) ## This pin controls red light that is illuminated when
 GPIO.setup(13, GPIO.OUT) ## This pin controls blue light when watering enabled
 GPIO.setup(15, GPIO.OUT) ## This pin controls green light when system ok
 
-wundergroundKey = "2102a479132f13b8" ## Enter your Wunderground key acquired by joining weather underground api program
+darkSkyKey = "f050a1d8c2e5a35e5dbbd81b43e2ba28" ## Enter your DarkSky key acquired by joining weather DarkSky api program
+latLon = "0,0" ## Latitude/Longitude for the weather request - string
 lastRain = 0 ## Hold epoch of last rain - float
-checkIncrement = 0  ## Amount of time between weather.com forecast requests - integer
+checkIncrement = 0  ## Amount of time between weather forecast requests - integer
 daysDisabled = 0 ## Days to disable systems prior to and after rain - integer
-zipCode = 0 ## Zip code for weather request - integer
 rainForecasted = False ## Is rain forecasted within daysDisabled forecast range - Boolean, global
 
-## Define conditions that will disable watering.  This includes Light/Heavy prefix on any of the following conditions
-## Weather.com Condition Phrases: http://www.wunderground.com/weather/api/d/docs?d=resources/phrase-glossary
-possibleConditions = ["Rain",
-                      "Rain Showers",
-                      "Thunderstorm",
-                      "Thunderstorms and Rain",
+## Define conditions that will disable watering: rain (in icon or precipType)
+## DarkSky: https://darksky.net/dev/docs#response-format
+possibleConditions = ["rain",
                       ]
-
-## Prefix each possible condition with 'Heavy' and 'Light', since these are possible conditions
-for x in possibleConditions[:]: ## Use slice notation to iterate loop inside slice copy of list
-    possibleConditions.insert(0,'Light ' + x)
-    possibleConditions.insert(0,'Heavy ' + x)
 
 ##This funtion gets the path of this file.  When run at startup, we need full path to access config file
 ##To run this file automatically at startup, change permission of this file to execute
@@ -45,17 +37,17 @@ def GetProgramDir():
 
 ## Load values from config file, or create it and get values
 try: ## see if config file exists
-    configFile = open(GetProgramDir() + "rain-bypass.cfg","r")  ## Attempt to open existing cfg file
+    configFile = open(GetProgramDir() + "bypass.cfg","r")  ## Attempt to open existing cfg file
     print "Config file found, loading previous values..."
-    zipCode = int(configFile.readline()) ## Convert zip to int to remove unicode formatting, store in zipCode
+    latLon = configFile.readline().rstrip() ## lat/lon is a string
     daysDisabled = int(configFile.readline()) ## Convert second line to int and store in daysDisabled var
     checkIncrement = int(configFile.readline()) ## Conver third line to int and store in checkIncrement var
     configFile.close()
 except: ## Exception: config file does not exist, create new
     print "Config file not found, creating new..."
 
-    ## Request zip code for request
-    zipCode = int(raw_input("Enter Zip Code: "))
+    ## Request lat/long for request
+    latLon = raw_input("Enter lat,lon (comma separated): ")
 
     ## input number of days system will be disabled prior to rain, and after rain
     daysDisabled = int(raw_input("Enter number of days to disable system prior/after rain (between 1 and 9): "))
@@ -65,12 +57,12 @@ except: ## Exception: config file does not exist, create new
     checkIncrement = 86400/checkIncrement ## This is the wait interval between each check in seconds
     
     ## Save user input to new config file
-    configFile = open(GetProgramDir() + "rain-bypass.cfg","w")
-    configFile.write(str(zipCode) + "\n" + str(daysDisabled) + "\n" + str(checkIncrement) + "\n") ## Write each item to new line
+    configFile = open(GetProgramDir() + "bypass.cfg","w")
+    configFile.write(latLon + "\n" + str(daysDisabled) + "\n" + str(checkIncrement) + "\n") ## Write each item to new line
     configFile.close()
 
 ## Show values/interval used to check weatherc
-print "Checking forecast for zip code: " + str(zipCode)
+print "Checking forecast for lat/lon: " + latLon
 print "System will be disabled for " + str(daysDisabled) + " days prior to and after rain"
 print "System will wait " + str(checkIncrement) + " seconds between checks"
 print "     or " + str(float(checkIncrement) / 60) + " minute(s) between checks"
@@ -84,58 +76,97 @@ def CheckWeather():
     
     while True: ## Loop this forever
         try:
+            ##Gather inputs
             ##Request Weather Data
-            request = urllib2.Request("http://api.wunderground.com/api/" + wundergroundKey +"/forecast10day/q/" + str(zipCode) + ".json") ## 10-day forecast
+            options = "?exclude=currently,minutely,hourly,alerts,flags"
+            darkSkyURL = "https://api.darksky.net/forecast/" + darkSkyKey + "/" + latLon + options
+            print "Weather service URL: " + darkSkyURL + "\n"
+            request = urllib2.Request(darkSkyURL) ## 8-day forecast
             response = urllib2.urlopen(request)
 
-            ## Create array to hold forecast values
-            dateArray = []
-
-            ## Parse XML into array with only pretty date, epoch, and conditions forecast
+            ## Parse json into array with only time, icon, precipIntensity, precipProbably and precipType
             jsonData = json.load(response)
-            for x in jsonData['forecast']['simpleforecast']['forecastday']:
-                dateArray.append([x['date']['pretty'],x['date']['epoch'],x['conditions']])
 
-            print "\nCurrent Forecast for current day, plus next 9 is:"
-            for x in dateArray:
-                print x[0] + ", " + x[1] + ", " + x[2]
+            print "\n### START DarkSky Data ###"
+            ## Extract the times
+            forecastTimes = ExtractValues(jsonData, 'time')
+            print("forecastTimes: ", forecastTimes)
+
+            ## Extract the forecast icons (remove the summary icon)
+            forecastIcons = ExtractValues(jsonData, 'icon')
+            del forecastIcons[0]
+            print("8 Day Forecast: ", forecastIcons)
+
+            ## Extract the precipProbabilities
+            forecastProbabilities = ExtractValues(jsonData, 'precipProbability')
+            print("forecastProbabilities: ", forecastProbabilities)
+
+            ## Extract the precipIntensities
+            forecastIntensities = ExtractValues(jsonData, 'precipIntensity')
+            print("forecastIntensities: ", forecastIntensities)
+            
+            ## Extract the precipTypes
+            forecastTypes = ExtractValues(jsonData, 'precipType')
+            print("forecastTypes: ", forecastTypes)
+            print "### END DarkSky Data ###"
 
             ##Check current day for rain
             print "\n### START Checking if raining TODAY ###"
-            if(CheckCondition(dateArray[0][2])): ## If is raining today
-                lastRain = float(dateArray[0][1]) ## Save current rain forecast as last rain globally
+            if(CheckCondition(forecastIcons[0])): ## If is raining today
+                lastRain = float(forecastTimes[0]) ## Save current rain forecast as last rain globally
                 print "It will rain today. Storing current epoch as 'last rain': " + str(lastRain)
             else:
                 print "No rain today"
             print "### END Checking if raining now ###\n"
 
-            ##Check if rain is forecast within current range
+            ##Check if rain is forecast within current range not to exceed forecast
+            forecastRange = range(1, (1+(daysDisabled if daysDisabled < len(forecastTimes) else len(forecastTimes))))
             print "### START Checking for rain in forecast range ###"
-            for x in range(1, daysDisabled+1):
-                print "Checking " + dateArray[x][0] + " for rain conditions:"
-                if(CheckCondition(dateArray[x][2])):
+            for x in forecastRange:
+                print "Checking " + str(forecastTimes[x]) + " for rain conditions:"
+                if(CheckCondition(forecastIcons[x])):
                    print("Rain has been forecast. Disabling watering")
                    rainForecasted = True ##Set global variable outside function scope
                    break
                 else:
-                   print("No rain found for current day. Watering may commence")
+                   print("No rain found for day ", x, " in forecast. Watering may commence")
                    rainForecasted = False ##Set global variable outside function scope
-            print "### END Checking if rain in forecast ###\n"
+            print "### END Checking if rain in forecast range ###\n"
 
             ## Now that we know current conditions and forecast, modify watering schedule
             ModifyWatering()
 
             GPIO.output(11,False) ## Turn off red data error light if on, routine successful
             GPIO.output(15,True)  ## Turn on the green status indicator light
-            print "Checking forecast again in " + str(checkIncrement / 60) + " minute(s)"
+            print "\nChecking forecast again in " + str(checkIncrement / 60) + " minute(s)"
             time.sleep(checkIncrement)
             
         except: ## Data unavailable - either connection error, or network error
             GPIO.output(11,True)  ## Turn on red data error light, routine unsuccessful
             GPIO.output(15,False) ## Turn off the green status indicator light
             GPIO.output(13,False) ## Turn off the blue watering indicator light
-            print "Error contacting weather.com. Trying again in " + str(checkIncrement / 60) + " minute(s)"
+            print "Error contacting darksky.com. Trying again in " + str(checkIncrement / 60) + " minute(s)"
             time.sleep(checkIncrement)  ## Reattempt connection in 1 increment
+
+def ExtractValues(obj, key):
+    ## Pull all values of spceified key from nested JSON.
+    arr = []
+
+    def ExtractValue(obj, arr, key):
+        ## Recursive search for values of key in JSON tree.    
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                if isinstance(v, (dict, list)):
+                    ExtractValue(v, arr, key)
+                elif k == key:
+                    arr.append(v)
+        elif isinstance(obj, list):
+            for item in obj:
+                ExtractValue(item, arr, key)
+        return arr
+
+    results = ExtractValue(obj, arr, key)
+    return results
 
 def CheckCondition(value):
     for x in possibleConditions:
