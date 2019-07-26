@@ -7,9 +7,9 @@ import os
 ## Setup GPIO I/O PIns to output mode
 GPIO.setmode(GPIO.BOARD)
 GPIO.setwarnings(False)
-GPIO.setup(7, GPIO.OUT) ## This pin controls relay switch. When ON/True, watering is disabled and the yellow light is illuminated. Default OFF
+GPIO.setup(7, GPIO.OUT) ## This pin controls the yellow light.  When ON/True, watering is disabled
 GPIO.setup(11, GPIO.OUT) ## This pin controls red light that is illuminated when there is a data error
-GPIO.setup(13, GPIO.OUT) ## This pin controls blue light when watering enabled
+GPIO.setup(13, GPIO.OUT) ## This pin controls blue light when watering enabled, and the relay switch.  When ON/True, watering is enabled.  Default ON
 GPIO.setup(15, GPIO.OUT) ## This pin controls green light when system ok
 
 darkSkyKey = "f050a1d8c2e5a35e5dbbd81b43e2ba28" ## Enter your DarkSky key acquired by joining weather DarkSky api program
@@ -184,11 +184,12 @@ def ModifyWatering():
 
     if(rainForecasted == False and time.time() - lastRain >= daysDisabled * 86400):
         print "Hasn't rained in a while, and not expected to rain. Watering enabled."
-        GPIO.output(7,False) ## Turn off relay switch and the yellow light, enable watering
-        GPIO.output(13,True) ## Turn on blue light
+        GPIO.output(7,False) ## Turn off yellow light
+        GPIO.output(13,True) ## Turn on blue light and the relay switch, enable watering
         GPIO.output(15,False) ## Turn on green light
     else:
-        GPIO.output(7,True) ## Turn on relay switch and the yellow light, disable watering
+        GPIO.output(7,True) ## Turn on the yellow light
+        GPIO.output(13,False) ## Turn off the blue light and relay switch, disable watering
         GPIO.output(13,False) ## Turn off blue light
         GPIO.output(15,True) ## Turn on green light
         if(rainForecasted):
